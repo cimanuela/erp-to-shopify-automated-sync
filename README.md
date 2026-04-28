@@ -1,15 +1,11 @@
-# Important Notice
+# ERP-to-Shopify Automated Sync
 
-This project is a technical documentation of ERP-to-eCommerce 
-automation patterns. It is NOT proprietary code or real 
-integration (just architecture & design).
+> ⚠️ **Educational Documentation Only** - This project documents 
+> architectural patterns and implementation workflows. All data 
+> (prices, SKUs, product names) is illustrative/anonymized. 
+> No proprietary business logic or credentials included.
 
-Real implementation details have been anonymized:
-- Store names: Generic (Happy4Pets → "Example Store")
-- Prices: Example values only
-- SKUs: Sample data only
-
-This is educational material for learning automation patterns.
+---
 
 # ERP-to-Shopify Automated Sync
 
