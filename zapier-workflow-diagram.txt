@@ -1,0 +1,395 @@
+ZAPIER WORKFLOW: ERP-to-Shopify Automated Sync
+===============================================
+
+TRIGGER
+-------
+Type: Zapier Schedule
+Frequency: Daily
+Day: Every day
+Time: 00:35 (5 minutes after Alyante export at 00:30)
+Timezone: Europe/Rome
+
+Status: ✓ Trigger fires daily at 00:35
+
+
+STEP 1: Read CSV from Server
+-------------------------------
+Type: Zapier HTTP / Webhooks by Zapier
+Method: GET
+URL: https://server/exports/alyante-daily.csv
+        OR
+Protocol: SFTP
+Host: server.example.com
+Path: /exports/alyante-daily.csv
+Auth: SSH key (if SFTP)
+
+Output: Raw CSV file content
+Example:  
+CODICE ARTICOLO;NOME ARTICOLO;PESO;...   
+12345;Happy Cat 10kg;10.5;...  
+12346;Dog Food 5kg;5.2;...  
+
+Status: ✓ HTTP request OR SFTP connection successful
+
+
+STEP 2: Parse CSV to Structured Data
+--------------------------------------
+Type: Zapier Formatter
+Action: Text to CSV (or Parse CSV)
+Input: {{CSV content from Step 1}}
+Output: Structured array of objects
+
+Example output:
+[
+  {
+    "codice_articolo": "12345",
+    "nome_articolo": "Happy Cat Minkas 10kg",
+    "peso": "10.5",
+    "prezzo_listino": "46.50",
+    "costo": "18.50",
+    "ean": "8024109123456",
+    "quantita": "45",
+    "status": "IN USO"
+  },
+  {
+    "codice_articolo": "12346",
+    "nome_articolo": "Dog Food Premium 5kg",
+    "peso": "5.2",
+    "prezzo_listino": "21.96",
+    "costo": "8.50",
+    "ean": "8024109654321",
+    "quantita": "12",
+    "status": "IN ESAURIMENTO"
+  },
+  ...
+]
+
+Status: ✓ CSV parsed into array
+
+
+STEP 3: Filter Out CODIFICATO Products
+----------------------------------------
+Type: Zapier Filter
+Condition: status != "CODIFICATO"
+Logic: Only continue if TRUE
+
+Example:
+✓ IN USO → Continue
+✓ IN ESAURIMENTO → Continue
+✓ ESAURITO → Continue
+✗ CODIFICATO → Stop (skip this product)
+
+Status: ✓ CODIFICATO products filtered out
+         Only 3 status types remain
+
+
+STEP 4: Loop Through Each Product
+-----------------------------------
+Type: Zapier Loop
+Input: {{Array from Step 3}}
+For each item: Execute steps 5-10
+
+Iteration example:
+Loop 1: SKU 12345 (Happy Cat)
+Loop 2: SKU 12346 (Dog Food)
+Loop 3: SKU 12347 (Cat Treats)
+...
+
+Status: ✓ Loop initialized for each product
+
+
+STEP 5: Search Shopify for Product by SKU
+-------------------------------------------
+Type: Shopify API / Zapier Shopify app
+Action: Search Products
+Query: {{codice_articolo}} (the SKU)
+Return: Product ID, current price, current quantity
+
+Zapier input:
+  Query: "12345"
+
+Shopify search result:
+{
+  "product_id": "gid://shopify/Product/9876543210",
+  "title": "Happy Cat Minkas - 10kg",
+  "handle": "happy-cat-minkas-10kg",
+  "variants": [
+    {
+      "id": "gid://shopify/ProductVariant/9876543211",
+      "price": "45.00",
+      "barcode": "8024109123456",
+      "inventory_quantity": "40"
+    }
+  ]
+}
+
+Decision:
+  ✓ IF found → Continue to Step 6 (update fields)
+  ✗ IF not found → Skip to Step 11 (log as SKIPPED)
+
+Status: ✓ Product found (or logged as SKIPPED)
+
+
+STEP 6: Build Update Payload
+------------------------------
+Type: Zapier Formatter
+Action: Build JSON object with fields to update
+
+Input from CSV:
+  peso: 10.5
+  prezzo_listino: 46.50
+  costo: 18.50
+  ean: 8024109123456
+  quantita: 45
+  status: IN USO
+
+Output: JSON payload for Shopify API
+
+{
+  "product": {
+    "id": "gid://shopify/Product/9876543210",
+    "variants": [
+      {
+        "id": "gid://shopify/ProductVariant/9876543211",
+        "price": "46.50",
+        "barcode": "8024109123456",
+        "inventory_quantity": 45,
+        "weight": "10.5"
+      }
+    ],
+    "metafields": [
+      {
+        "namespace": "custom",
+        "key": "costo",
+        "value": "18.50"
+      },
+      {
+        "namespace": "custom",
+        "key": "status_alyante",
+        "value": "IN USO"
+      }
+    ]
+  }
+}
+
+Status: ✓ Update payload built
+
+
+STEP 7: Determine Tags & Visibility Based on Status
+-----------------------------------------------------
+Type: Zapier Formatter (Conditional)
+Logic: IF/THEN for status
+
+IF status == "IN USO":
+  visibility = "VISIBLE"
+  tags = []
+  
+IF status == "IN ESAURIMENTO":
+  visibility = "VISIBLE"
+  tags = ["LAST_PIECES"]
+  
+IF status == "ESAURITO":
+  visibility = "HIDDEN"
+  tags = ["TEMPORARILY_OUT"]
+  (Note: could be PERMANENTLY_OUT if different logic)
+
+Output:
+{
+  "visibility": "VISIBLE",
+  "tags": ["LAST_PIECES"]
+}
+
+Status: ✓ Tags determined
+
+
+STEP 8: Update Shopify Product
+--------------------------------
+Type: Shopify API
+Action: Update Product
+
+Input:
+  Product ID: {{shopify_product_id}}
+  Payload: {{update_payload from Step 6}}
+  Tags: {{tags from Step 7}}
+  Visibility: {{visibility from Step 7}}
+
+Shopify API call:
+  PATCH /admin/api/2024-01/products/{{id}}.json
+
+Response:
+{
+  "product": {
+    "id": 9876543210,
+    "updated_at": "2026-05-01T00:35:30Z",
+    "variants": [
+      {
+        "price": "46.50",
+        "inventory_quantity": 45
+      }
+    ]
+  }
+}
+
+Status: ✓ Product updated in Shopify
+
+
+STEP 9: Apply Visibility & Tags
+---------------------------------
+Type: Shopify API / Zapier action
+Action 1: Set product visibility
+  IF status = "ESAURITO": hidden = true
+  ELSE: hidden = false
+
+Action 2: Add tags
+  tags = {{tags from Step 7}}
+
+Shopify API:
+  PATCH /admin/api/2024-01/products/{{id}}.json
+  {
+    "product": {
+      "published_at": {{null if hidden, ISO date if visible}},
+      "tags": "LAST_PIECES"
+    }
+  }
+
+Status: ✓ Visibility and tags applied
+
+
+STEP 10: Log Success to Google Sheets
+---------------------------------------
+Type: Google Sheets
+Action: Append row
+
+Columns:
+  A: Timestamp ({{now}})
+  B: SKU ({{codice_articolo}})
+  C: Product Name ({{nome_articolo}})
+  D: Fields Updated (Prezzo, Qty, Status)
+  E: Old Price (from Step 5)
+  F: New Price ({{prezzo_listino}})
+  G: Old Qty (from Step 5)
+  H: New Qty ({{quantita}})
+  I: Status (SUCCESS)
+
+Google Sheets append:
+  Sheet: "Sync Log"
+  Row: 2026-05-01 00:35:30 | 12345 | Happy Cat 10kg | Prezzo, Qty | €45.00 | €46.50 | 40 | 45 | SUCCESS
+
+Status: ✓ Logged to Sheets
+
+
+STEP 11: On Error → Log to Error Sheet
+----------------------------------------
+Type: Google Sheets (Error handler)
+Action: Append row to "Errors" sheet
+
+If error occurs in any step:
+  - Timestamp
+  - SKU
+  - Step where error occurred
+  - Error message
+  - Action taken (retry, skip, escalate)
+
+Example:
+  2026-05-01 00:35:45 | 12346 | STEP 8 | API rate limit | Retry in 60 seconds
+
+Status: ✓ Error logged
+
+
+END OF LOOP
+-----------
+Once all products processed (Steps 4-11 complete):
+  Loop ends
+  Workflow complete
+
+
+SUMMARY LOG
+-----------
+Type: Google Sheets (Summary)
+Append to "Sync Summary" sheet:
+
+Date: 2026-05-01
+Time: 00:35
+Total products processed: 487
+Successful: 485
+Skipped (not in Shopify): 2
+Failed: 0
+Duration: 4 minutes 30 seconds
+Status: ✓ SUCCESS
+
+Status: ✓ Workflow complete
+
+
+WORKFLOW OVERVIEW (ASCII)
+=========================
+
+00:30 Alyante exports CSV
+  ↓
+00:35 Zapier trigger fires
+  ↓
+[Read CSV from server] ✓
+  ↓
+[Parse to structured data] ✓
+  ↓
+[Filter CODIFICATO] ✓ (remove dirty data)
+  ↓
+[Loop: For each product]
+  ├─ [Search Shopify by SKU]
+  │  ├─ IF found:
+  │  │  ├─ [Build update payload]
+  │  │  ├─ [Determine tags/visibility]
+  │  │  ├─ [Update Shopify]
+  │  │  ├─ [Apply tags & visibility]
+  │  │  └─ [Log SUCCESS to Sheets] ✓
+  │  └─ IF not found:
+  │     └─ [Skip & log to Sheets] ✓
+  └─ [Next product]
+  ↓
+[Workflow complete]
+  ↓
+04:00 Zapier sends summary email (optional)
+
+
+EXPECTED EXECUTION TIME
+=======================
+
+Per product: 1-2 seconds
+Total products: 487
+Expected duration: 10-15 minutes
+
+Breakdown:
+- Read CSV: 5 seconds
+- Parse CSV: 2 seconds
+- Filter: 1 second
+- Loop 487 products: 487 × 1.5s = 730 seconds = 12 min
+- Log to Sheets: 2 minutes
+Total: ~15 minutes
+
+Execution window: 00:35 - 00:50
+
+
+ERROR SCENARIOS
+===============
+
+Scenario 1: CSV file not found
+  Action: Email alert to admin
+  Retry: Automatically retry at 12:00 (noon)
+  Impact: Products not synced that day
+
+Scenario 2: Shopify API rate limit (2 calls/sec)
+  Action: Backoff strategy (wait 10 seconds, retry)
+  Retry: Continue with next batch
+  Impact: Workflow takes longer but completes
+
+Scenario 3: SKU mismatch (Alyante SKU ≠ Shopify SKU)
+  Action: Log to "Skipped" sheet
+  Solution: Manual mapping needed (one-time)
+  Impact: That product not synced (wait for fix)
+
+Scenario 4: Bad CSV data (price = null, qty = "abc")
+  Action: Skip field, log warning
+  Impact: Some fields not updated (manual fix needed)
+
+Scenario 5: Shopify product hidden/archived
+  Action: Skip update, log as "Archived"
+  Impact: No error (just skip inactive products)
