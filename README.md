@@ -1,3 +1,16 @@
+# Important Notice
+
+This project is a technical documentation of ERP-to-eCommerce 
+automation patterns. It is NOT proprietary code or real 
+integration (just architecture & design).
+
+Real implementation details have been anonymized:
+- Store names: Generic (Happy4Pets → "Example Store")
+- Prices: Example values only
+- SKUs: Sample data only
+
+This is educational material for learning automation patterns.
+
 # ERP-to-Shopify Automated Sync
 
 **Real-world integration** - Daily automated inventory sync from TeamSystem Alyante to Shopify.
